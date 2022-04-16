@@ -1,0 +1,265 @@
+diff --git a/include/config_directives.h b/include/config_directives.h
+index c6a60061..ab728732 100644
+--- a/include/config_directives.h
++++ b/include/config_directives.h
+@@ -46,6 +46,7 @@ CFGFUN(for_window, const char *command);
+ CFGFUN(gaps, const char *workspace, const char *type, const long value);
+ CFGFUN(smart_borders, const char *enable);
+ CFGFUN(smart_gaps, const char *enable);
++CFGFUN(border_radius, const long radius);
+ CFGFUN(floating_minimum_size, const long width, const long height);
+ CFGFUN(floating_maximum_size, const long width, const long height);
+ CFGFUN(default_orientation, const char *orientation);
+diff --git a/include/configuration.h b/include/configuration.h
+index 28bcaa42..2775779e 100644
+--- a/include/configuration.h
++++ b/include/configuration.h
+@@ -274,6 +274,9 @@ struct Config {
+ 
+     /* Disable gaps if there is only one container on the workspace */
+     smart_gaps_t smart_gaps;
++
++    /* Border radius (resloved/i3) */
++    int32_t border_radius;
+ };
+ 
+ /**
+diff --git a/include/data.h b/include/data.h
+index 0dd097f3..b322c3d7 100644
+--- a/include/data.h
++++ b/include/data.h
+@@ -786,4 +786,6 @@ struct Con {
+ 
+     /* The colormap for this con if a custom one is used. */
+     xcb_colormap_t colormap;
++
++    uint32_t border_radius;
+ };
+diff --git a/parser-specs/config.spec b/parser-specs/config.spec
+index 15be38a5..a34ec14a 100644
+--- a/parser-specs/config.spec
++++ b/parser-specs/config.spec
+@@ -28,6 +28,7 @@ state INITIAL:
+   'gaps'                                   -> GAPS
+   'smart_borders'                          -> SMART_BORDERS
+   'smart_gaps'                             -> SMART_GAPS
++  'border_radius'                          -> BORDER_RADIUS
+   'floating_minimum_size'                  -> FLOATING_MINIMUM_SIZE_WIDTH
+   'floating_maximum_size'                  -> FLOATING_MAXIMUM_SIZE_WIDTH
+   'floating_modifier'                      -> FLOATING_MODIFIER
+@@ -96,6 +97,11 @@ state INCLUDE:
+   pattern = string
+       -> call cfg_include($pattern)
+ 
++# border_radius <radius>
++state BORDER_RADIUS:
++  radius = number
++      -> call cfg_border_radius(&radius)
++
+ # floating_minimum_size <width> x <height>
+ state FLOATING_MINIMUM_SIZE_WIDTH:
+   width = number
+diff --git a/src/con.c b/src/con.c
+index 6d062382..094f94f7 100644
+--- a/src/con.c
++++ b/src/con.c
+@@ -1703,6 +1703,9 @@ Rect con_border_style_rect(Con *con) {
+             return (Rect){0, 0, 0, 0};
+     }
+ 
++    // Copy border_radius from config to con
++    con->border_radius = config.border_radius;
++
+     adjacent_t borders_to_hide = ADJ_NONE;
+     int border_width = con->current_border_width;
+     DLOG("The border width for con is set to: %d\n", con->current_border_width);
+diff --git a/src/config_directives.c b/src/config_directives.c
+index 1ec563f1..a0533606 100644
+--- a/src/config_directives.c
++++ b/src/config_directives.c
+@@ -386,6 +386,10 @@ CFGFUN(smart_gaps, const char *enable) {
+         config.smart_gaps = boolstr(enable) ? SMART_GAPS_ON : SMART_GAPS_OFF;
+ }
+ 
++CFGFUN(border_radius, const long radius) {
++    config.border_radius = radius;
++}
++
+ CFGFUN(floating_minimum_size, const long width, const long height) {
+     config.floating_minimum_width = width;
+     config.floating_minimum_height = height;
+diff --git a/src/x.c b/src/x.c
+index 42df9966..159ded24 100644
+--- a/src/x.c
++++ b/src/x.c
+@@ -452,6 +452,135 @@ static size_t x_get_border_rectangles(Con *con, xcb_rectangle_t rectangles[4]) {
+     return count;
+ }
+ 
++static void x_shape_title(Con *con) {
++    if (con->layout != L_TABBED && con->layout != L_STACKED) {
++        return;
++    }
++
++    uint16_t w = con->rect.width;
++    uint16_t h = con->rect.height;
++
++    xcb_pixmap_t pid = xcb_generate_id(conn);
++
++    xcb_create_pixmap(conn, 1, pid, con->frame.id, w, h);
++
++    xcb_gcontext_t black = xcb_generate_id(conn);
++    xcb_gcontext_t white = xcb_generate_id(conn);
++
++    xcb_create_gc(conn, black, pid, XCB_GC_FOREGROUND, (uint32_t[]){0, 0});
++    xcb_create_gc(conn, white, pid, XCB_GC_FOREGROUND, (uint32_t[]){1, 0});
++
++    int32_t r = con->border_radius;
++    int32_t d = r * 2;
++
++    xcb_rectangle_t bounding = {0, 0, w, h};
++
++    xcb_arc_t arcs[] = {
++        {0, 1, d, d, 0, 360 << 6},
++        {w - d - 1, 1, d, d, 0, 360 << 6},
++    };
++
++    xcb_rectangle_t rects[] = {
++        {r, 0, w - d, h},
++        {0, r, w, h - r},
++    };
++
++    xcb_poly_fill_rectangle(conn, pid, black, 1, &bounding);
++    xcb_poly_fill_rectangle(conn, pid, white, 2, rects);
++    xcb_poly_fill_arc(conn, pid, white, 2, arcs);
++
++    xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, con->frame.id, 0, 0, pid);
++    xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_CLIP, con->frame.id, 0, 0, pid);
++
++    xcb_free_pixmap(conn, pid);
++}
++
++static bool has_outer_gaps(gaps_t gaps) {
++    return gaps.top > 0 ||
++           gaps.right > 0 ||
++           gaps.bottom > 0 ||
++           gaps.left > 0;
++}
++
++static bool has_exactly_one_child(Con *con) {
++    Con *workspace = con_get_workspace(con);
++
++    // clang-format off
++    return con_num_visible_children(workspace) <= 1
++        || (con_num_children(workspace) == 1 &&
++            (TAILQ_FIRST(&(workspace->nodes_head))->layout == L_TABBED ||
++             TAILQ_FIRST(&(workspace->nodes_head))->layout == L_STACKED));
++    // clang-format on
++}
++
++static bool smart_gaps_active(Con *con) {
++    return config.smart_gaps == SMART_GAPS_ON && has_exactly_one_child(con);
++}
++
++static bool smart_gaps_has_gaps(Con *con) {
++    return smart_gaps_active(con) && !has_outer_gaps(calculate_effective_gaps(con));
++}
++
++/*
++ * Round window corners when possible
++ *
++ */
++static void x_shape_window(Con *con) {
++    const xcb_query_extension_reply_t *shape_query;
++    shape_query = xcb_get_extension_data(conn, &xcb_shape_id);
++
++    if (!shape_query->present || con->parent->type == CT_DOCKAREA) {
++        DLOG("You cannot make %p / %s have rounded corners.\n", con, con->name);
++        return;
++    }
++
++    if (con->fullscreen_mode != CF_NONE || (!con_is_floating(con) && smart_gaps_has_gaps(con))) {
++        xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, con->frame.id, 0, 0, XCB_NONE);
++        xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_CLIP, con->frame.id, 0, 0, XCB_NONE);
++        return;
++    }
++
++    uint16_t w = con->rect.width;
++    uint16_t h = con->rect.height;
++    uint16_t dh = con->deco_rect.height;
++
++    xcb_pixmap_t pid = xcb_generate_id(conn);
++
++    xcb_create_pixmap(conn, 1, pid, con->frame.id, w, h);
++
++    xcb_gcontext_t black = xcb_generate_id(conn);
++    xcb_gcontext_t white = xcb_generate_id(conn);
++
++    xcb_create_gc(conn, black, pid, XCB_GC_FOREGROUND, (uint32_t[]){0, 0});
++    xcb_create_gc(conn, white, pid, XCB_GC_FOREGROUND, (uint32_t[]){1, 0});
++
++    int32_t r = con->border_radius;
++    int32_t d = r * 2;
++
++    xcb_rectangle_t bounding = {0, 0, w, h};
++
++    xcb_arc_t arcs[] = {
++        {0, -dh, d, d, 0, 360 << 6},
++        {0, h - d - 1, d, d, 0, 360 << 6},
++        {w - d - 1, -dh, d, d, 0, 360 << 6},
++        {w - d - 1, h - d - 1, d, d, 0, 360 << 6},
++    };
++
++    xcb_rectangle_t rects[] = {
++        {r, 0, w - d, h},
++        {0, r - dh, w, h - d + dh},
++    };
++
++    xcb_poly_fill_rectangle(conn, pid, black, 1, &bounding);
++    xcb_poly_fill_rectangle(conn, pid, white, 2, rects);
++    xcb_poly_fill_arc(conn, pid, white, 4, arcs);
++
++    xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING, con->frame.id, 0, 0, pid);
++    xcb_shape_mask(conn, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_CLIP, con->frame.id, 0, 0, pid);
++
++    xcb_free_pixmap(conn, pid);
++}
++
+ /*
+  * Draws the decoration of the given container onto its parent.
+  *
+@@ -746,6 +875,7 @@ void x_draw_decoration(Con *con) {
+ 
+     x_draw_decoration_after_title(con, p);
+ copy_pixmaps:
++    x_shape_window(con);
+     draw_util_copy_surface(&(con->frame_buffer), &(con->frame), 0, 0, 0, 0, con->rect.width, con->rect.height);
+ }
+ 
+@@ -1019,11 +1149,13 @@ void x_push_node(Con *con) {
+              * TODO: Should this work the same way for L_TABBED? */
+             if (!con->parent ||
+                 con->parent->layout != L_STACKED ||
+-                TAILQ_FIRST(&(con->parent->focus_head)) == con)
++                TAILQ_FIRST(&(con->parent->focus_head)) == con) {
+                 /* Render the decoration now to make the correct decoration visible
+                  * from the very first moment. Later calls will be cached, so this
+                  * doesn’t hurt performance. */
+                 x_deco_recurse(con);
++                x_shape_title(con);
++            }
+         }
+ 
+         DLOG("setting rect (%d, %d, %d, %d)\n", rect.x, rect.y, rect.width, rect.height);
+diff --git a/testcases/t/201-config-parser.t b/testcases/t/201-config-parser.t
+index d1446c4d..0016001a 100644
+--- a/testcases/t/201-config-parser.t
++++ b/testcases/t/201-config-parser.t
+@@ -518,6 +518,7 @@ my $expected_all_tokens = "ERROR: CONFIG: Expected one of these tokens: <end>, '
+         gaps
+         smart_borders
+         smart_gaps
++        border_radius
+         floating_minimum_size
+         floating_maximum_size
+         floating_modifier
