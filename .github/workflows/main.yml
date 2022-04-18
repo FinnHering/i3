@@ -2,9 +2,9 @@ name: GitHub Actions
 
 on:
   push:
-    branches: [ gaps-next, gaps, actions ]
+    branches: [ gaps-next, gaps, actions, main ]
   pull_request:
-    branches: [ gaps-next ]
+    branches: [ main ]
 
 jobs:
   build:
