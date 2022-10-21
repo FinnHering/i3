@@ -57,6 +57,7 @@ state INITIAL:
   'ipc_kill_timeout'                       -> IPC_KILL_TIMEOUT
   'restart_state'                          -> RESTART_STATE
   'popup_during_fullscreen'                -> POPUP_DURING_FULLSCREEN
+  'tiling_drag'                            -> TILING_DRAG
   exectype = 'exec_always', 'exec'         -> EXEC
   colorclass = 'client.background'
       -> COLOR_SINGLE
@@ -368,6 +369,18 @@ state POPUP_DURING_FULLSCREEN:
   value = 'ignore', 'leave_fullscreen', 'smart'
       -> call cfg_popup_during_fullscreen($value)
 
+state TILING_DRAG_MODE:
+  value = 'modifier', 'titlebar'
+      ->
+  end
+      -> call cfg_tiling_drag($value)
+
+state TILING_DRAG:
+  off = '0', 'no', 'false', 'off', 'disable', 'inactive'
+      -> call cfg_tiling_drag($off)
+  value = 'modifier', 'titlebar'
+      -> TILING_DRAG_MODE
+
 # client.background <hexcolor>
 state COLOR_SINGLE:
   color = word
@@ -604,7 +617,7 @@ state BAR_POSITION:
       -> call cfg_bar_position($position); BAR
 
 state BAR_OUTPUT:
-  output = string
+  output = word
       -> call cfg_bar_output($output); BAR
 
 state BAR_TRAY_OUTPUT:
