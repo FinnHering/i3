@@ -19,6 +19,7 @@ config_t config;
 static char *cur_key;
 static bool parsing_bindings;
 static bool parsing_tray_outputs;
+static bool parsing_padding;
 
 /*
  * Parse a key.
@@ -38,12 +39,17 @@ static int config_map_key_cb(void *params_, const unsigned char *keyVal, size_t 
         parsing_tray_outputs = true;
     }
 
+    if (strcmp(cur_key, "padding") == 0) {
+        parsing_padding = true;
+    }
+
     return 1;
 }
 
 static int config_end_array_cb(void *params_) {
     parsing_bindings = false;
     parsing_tray_outputs = false;
+    parsing_padding = false;
     return 1;
 }
 
@@ -182,8 +188,14 @@ static int config_string_cb(void *params_, const unsigned char *val, size_t _len
     }
 
     if (!strcmp(cur_key, "status_command")) {
-        DLOG("command = %.*s\n", len, val);
+        DLOG("status_command = %.*s\n", len, val);
         sasprintf(&config.command, "%.*s", len, val);
+        return 1;
+    }
+
+    if (!strcmp(cur_key, "workspace_command")) {
+        DLOG("workspace_command = %.*s\n", len, val);
+        sasprintf(&config.workspace_command, "%.*s", len, val);
         return 1;
     }
 
@@ -329,8 +341,31 @@ static int config_integer_cb(void *params_, long long val) {
         return 0;
     }
 
+    if (parsing_padding) {
+        if (strcmp(cur_key, "x") == 0) {
+            DLOG("padding.x = %lld\n", val);
+            config.padding.x = (uint32_t)val;
+            return 1;
+        }
+        if (strcmp(cur_key, "y") == 0) {
+            DLOG("padding.y = %lld\n", val);
+            config.padding.y = (uint32_t)val;
+            return 1;
+        }
+        if (strcmp(cur_key, "width") == 0) {
+            DLOG("padding.width = %lld\n", val);
+            config.padding.width = (uint32_t)val;
+            return 1;
+        }
+        if (strcmp(cur_key, "height") == 0) {
+            DLOG("padding.height = %lld\n", val);
+            config.padding.height = (uint32_t)val;
+            return 1;
+        }
+    }
+
     if (!strcmp(cur_key, "bar_height")) {
-        DLOG("bar_height = %lld", val);
+        DLOG("bar_height = %lld\n", val);
         config.bar_height = (uint32_t)val;
         return 1;
     }
@@ -367,16 +402,15 @@ static yajl_callbacks outputs_callbacks = {
 };
 
 /*
- * Start parsing the received bar configuration JSON string
+ * Parse the received bar configuration JSON string
  *
  */
-void parse_config_json(char *json) {
-    yajl_handle handle = yajl_alloc(&outputs_callbacks, NULL, NULL);
-
+void parse_config_json(const unsigned char *json, size_t size) {
     TAILQ_INIT(&(config.bindings));
     TAILQ_INIT(&(config.tray_outputs));
 
-    yajl_status state = yajl_parse(handle, (const unsigned char *)json, strlen(json));
+    yajl_handle handle = yajl_alloc(&outputs_callbacks, NULL, NULL);
+    yajl_status state = yajl_parse(handle, json, size);
 
     /* FIXME: Proper error handling for JSON parsing */
     switch (state) {
@@ -389,6 +423,11 @@ void parse_config_json(char *json) {
             break;
     }
 
+    if (config.disable_ws && config.workspace_command) {
+        ELOG("You have specified 'workspace_buttons no'. Your 'workspace_command %s' will be ignored.\n", config.workspace_command);
+        FREE(config.workspace_command);
+    }
+
     yajl_free(handle);
 }
 
@@ -398,16 +437,16 @@ static int i3bar_config_string_cb(void *params_, const unsigned char *val, size_
 }
 
 /*
- * Start parsing the received bar configuration list. The only usecase right
- * now is to automatically get the first bar id.
+ * Parse the received bar configuration list. The only usecase right now is to
+ * automatically get the first bar id.
  *
  */
-void parse_get_first_i3bar_config(char *json) {
+void parse_get_first_i3bar_config(const unsigned char *json, size_t size) {
     yajl_callbacks configs_callbacks = {
         .yajl_string = i3bar_config_string_cb,
     };
     yajl_handle handle = yajl_alloc(&configs_callbacks, NULL, NULL);
-    yajl_parse(handle, (const unsigned char *)json, strlen(json));
+    yajl_parse(handle, json, size);
     yajl_free(handle);
 }
 

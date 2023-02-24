@@ -69,13 +69,19 @@ state IGNORE_LINE:
   line
       -> INITIAL
 
-# gaps inner|outer|horizontal|vertical|top|right|bottom|left <px>
+# gaps inner|outer|horizontal|vertical|top|right|bottom|left <gap_size>[px]
 state GAPS:
   scope = 'inner', 'outer', 'horizontal', 'vertical', 'top', 'right', 'bottom', 'left'
       -> GAPS_WITH_SCOPE
 
 state GAPS_WITH_SCOPE:
   value = number
+      -> GAPS_END
+
+state GAPS_END:
+  'px'
+      ->
+  end
       -> call cfg_gaps($workspace, $scope, &value)
 
 # smart_borders true|false
@@ -86,7 +92,7 @@ state SMART_BORDERS:
   enabled = 'no_gaps'
       -> call cfg_smart_borders($enabled)
 
-# smart_gaps on|off
+# smart_gaps on|off|inverse_outer
 state SMART_GAPS:
   enabled = '1', 'yes', 'true', 'on', 'enable', 'active'
       -> call cfg_smart_gaps($enabled)
@@ -170,7 +176,7 @@ state DEFAULT_BORDER_PIXELS_PX:
   end
       -> call cfg_default_border($windowtype, $border, &width)
 
-# hide_edge_borders <none|vertical|horizontal|both|smart|no_gaps>
+# hide_edge_borders <none|vertical|horizontal|both|smart|smart_no_gaps>
 # also hide_edge_borders <bool> for compatibility
 state HIDE_EDGE_BORDERS:
   hide_borders = 'none', 'vertical', 'horizontal', 'both', 'smart_no_gaps', 'smart'
@@ -528,6 +534,7 @@ state BAR:
   'set' -> BAR_IGNORE_LINE
   'i3bar_command'          -> BAR_BAR_COMMAND
   'status_command'         -> BAR_STATUS_COMMAND
+  'workspace_command'      -> BAR_WORKSPACE_COMMAND
   'socket_path'            -> BAR_SOCKET_PATH
   'mode'                   -> BAR_MODE
   'hidden_state'           -> BAR_HIDDEN_STATE
@@ -549,6 +556,7 @@ state BAR:
   'strip_workspace_name' -> BAR_STRIP_WORKSPACE_NAME
   'verbose'                -> BAR_VERBOSE
   'height'                 -> BAR_HEIGHT
+  'padding'                -> BAR_PADDING
   'colors'                 -> BAR_COLORS_BRACE
   '}'
       -> call cfg_bar_finish(); INITIAL
@@ -565,6 +573,10 @@ state BAR_BAR_COMMAND:
 state BAR_STATUS_COMMAND:
   command = string
       -> call cfg_bar_status_command($command); BAR
+
+state BAR_WORKSPACE_COMMAND:
+  command = string
+      -> call cfg_bar_workspace_command($command); BAR
 
 state BAR_SOCKET_PATH:
   path = string
@@ -675,6 +687,40 @@ state BAR_VERBOSE:
 state BAR_HEIGHT:
   value = number
       -> call cfg_bar_height(&value); BAR
+
+state BAR_PADDING:
+  top_or_all = number
+      -> BAR_PADDING_TOP
+
+state BAR_PADDING_TOP:
+  'px'
+      ->
+  right_or_right_and_left = number
+      -> BAR_PADDING_RIGHT
+  end
+      -> call cfg_bar_padding_one(&top_or_all); BAR
+
+state BAR_PADDING_RIGHT:
+  'px'
+      ->
+  bottom = number
+      -> BAR_PADDING_BOTTOM
+  end
+      -> call cfg_bar_padding_two(&top_or_all, &right_or_right_and_left); BAR
+
+state BAR_PADDING_BOTTOM:
+  'px'
+      ->
+  left = number
+      -> BAR_PADDING_LEFT
+  end
+      -> call cfg_bar_padding_three(&top_or_all, &right_or_right_and_left, &bottom); BAR
+
+state BAR_PADDING_LEFT:
+  'px'
+      ->
+  end
+      -> call cfg_bar_padding_four(&top_or_all, &right_or_right_and_left, &bottom, &left); BAR
 
 state BAR_COLORS_BRACE:
   end

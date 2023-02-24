@@ -338,6 +338,10 @@ struct Barconfig {
      * Will be passed to the shell. */
     char *status_command;
 
+    /** Command that should be run to get the workspace buttons. Will be passed
+     * to the shell. */
+    char *workspace_command;
+
     /** Font specification for all text rendered on the bar. */
     char *font;
 
@@ -369,6 +373,8 @@ struct Barconfig {
 
     /** Defines the height of the bar in pixels. */
     uint32_t bar_height;
+
+    struct Rect padding;
 
     struct bar_colors {
         char *background;
